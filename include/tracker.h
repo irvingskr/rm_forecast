@@ -6,6 +6,7 @@
 #define RM_FORECAST_TRACKER_H
 
 #include "kalman_filter.h"
+#include "forecast_node.h"
 #include "std_msgs/Float32.h"
 #include <Eigen/Core>
 #include <Eigen/Eigen>
@@ -26,6 +27,7 @@
 #include <vector>
 
 namespace rm_forecast {
+
 class Tracker {
 public:
   Tracker(const KalmanFilterMatrices &kf_matrices);
@@ -33,9 +35,9 @@ public:
   //        using Armors = auto_aim_interfaces::msg::Armors; /***？？***/
   //        using Armor = auto_aim_interfaces::msg::Armor;
 
-  void init(const rm_msgs::TargetDetectionArray &msg);
+  void init(const float &angle);
 
-  void update(const rm_msgs::TargetDetectionArray &msg, const double &dt, const double &max_match_distance, const int &tracking_threshold, const int &lost_threshold);
+  void update(const float &angle, const double &dt, const double &max_match_distance, const int &tracking_threshold, const int &lost_threshold);
 
   enum State {
     LOST,
