@@ -1,6 +1,8 @@
 //
 // Created by ljt666666 on 22-10-9.
 //
+#ifndef RM_FORECAST_FORECAST_H
+#define RM_FORECAST_FORECAST_H
 
 #pragma once
 
@@ -9,6 +11,10 @@
 #include "spin_observer.h"
 #include <Eigen/Core>
 #include <Eigen/Eigen>
+#include <Eigen/Dense>
+#include <opencv2/core/eigen.hpp>
+#include <opencv2/calib3d.hpp>
+#include <opencv2/core.hpp>
 #include <XmlRpcValue.h>
 #include <cmath>
 #include <cv_bridge/cv_bridge.h>
@@ -30,7 +36,23 @@
 #include <vector>
 
 using namespace std;
+
 namespace rm_forecast {
+    struct InfoTarget
+    {
+        ros::Time stamp;
+        float angle;
+    };
+
+    struct Target
+    {
+        std::vector<float> points;
+        cv::Point3f armor_center_points;
+        cv::Point3f r_points;
+        int label;
+        Eigen::Matrix3d rmat;
+        Eigen::Vector3d tvec;
+    };
 
 static double max_match_distance_{};
 static int tracking_threshold_{};
@@ -86,7 +108,9 @@ private:
 
   void speedCallback(const rm_msgs::TargetDetectionArray::Ptr &msg);
 
-  void outpostCallback(const rm_msgs::TargetDetectionArray::Ptr &msg);
+
+
+    void outpostCallback(const rm_msgs::TargetDetectionArray::Ptr &msg);
   bool forecast_readied_ = false;
   bool reset_ = false;
   bool init_flag_ = false;
@@ -101,15 +125,50 @@ private:
     double fly_time_ = 0.5;
     double y_thred_ = 0.05;
     ros::Time last_min_time_;
-  double max_x_ = 0, min_x_ = 0, min_distance_ = 0;
-  rm_msgs::TargetDetectionArray max_x_target_;
-  rm_msgs::TargetDetectionArray min_x_target_;
+  double max_y_ = 0, min_y_ = 0, min_distance_ = 0;
+  rm_msgs::TargetDetectionArray max_y_target_;
+  rm_msgs::TargetDetectionArray min_y_target_;
     rm_msgs::TargetDetectionArray min_distance_target_;
-  ros::Time min_x_time_;
+  ros::Time min_y_time_;
   double theta_b_;
 
   std::thread my_thread_;
   image_transport::Publisher image_pub_;
+
+  ///draw reproject
+    void drawCallback(const sensor_msgs::ImageConstPtr& img);
+
+    template<typename T>
+    bool initMatrix(Eigen::MatrixXd &matrix,std::vector<T> &vector);
+
+    ros::Subscriber draw_sub_;
+    image_transport::Publisher draw_pub_;
+
+    bool is_reproject_;
+    double re_fly_time_;
+    cv::Mat m_intrinsic_;
+
+    ///windmill kalman
+    void pointsCallback(const rm_msgs::TargetDetectionArray::Ptr &msg);
+
+    Target pnp(const std::vector<cv::Point2f>& points_pic);
+
+    std::vector<double> calcAimingAngleOffset(Target& object, double params[4], double t0, double t1, int mode);
+
+    cv::Point2f reproject(Eigen::Vector3d &xyz);
+
+    cv::Matx33f cam_intrinsic_mat_k_;
+//    std::vector<double> dist_coefficients_;
+    cv::Matx<float, 1, 5> dist_coefficients_;
+
+    const double fan_length_ = 0.7; //大符臂长(R字中心至装甲板中心)
+    double delay_time_ = 0.5;
+    cv::Point2f target2d_{};
+    cv::Point2f r2d_{};
+    cv::Point2f last_target2d_{};
+    cv::Point2f last_r2d_{};
 };
 
 } // namespace rm_forecast
+
+#endif // RM_FORECAST_FORECAST_H

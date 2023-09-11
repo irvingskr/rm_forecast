@@ -6,3 +6,5 @@ max_jump_period: 0.8
 allow_following_range: 0.3
 y_thred: 0.03
 fly_time: 500
+is_reproject: false
+re_fly_time: 0.4

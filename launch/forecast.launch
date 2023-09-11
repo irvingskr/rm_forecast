@@ -4,6 +4,11 @@
 <!--     <param name="num_worker_threads" value="8" /> -->
 <!-- </node> -->
 
+<!--     <node pkg="nodelet" type="nodelet" name="forecast" -->
+<!--         args="load rm_forecast/Forecast_Node vision_nodelet" > -->
+<!--         <rosparam file="$(find rm_forecast)/config/forecast.yaml" command="load" /> -->
+<!--     </node> -->
+
 <!-- <node pkg="tf" type="static_transform_publisher" name="link1_broadcaster" args="1 0 0 0 0 0 1 odom camera_optical_frame 100" /> -->
 
 

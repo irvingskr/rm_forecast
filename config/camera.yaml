@@ -1,0 +1,72 @@
+image_width: 1440
+image_height: 1080
+camera_name: camera
+camera_matrix:
+  rows: 3
+  cols: 3
+  data: [2373.88547,    0.     ,  739.83044,
+         0.     , 2373.57278,  613.58392,
+         0.     ,    0.     ,    1.     ]
+distortion_model: plumb_bob
+distortion_coefficients:
+  rows: 1
+  cols: 5
+  data: [-0.029922, 0.119234, 0.001839, 0.001607, 0.000000]
+rectification_matrix:
+  rows: 3
+  cols: 3
+  data: [1., 0., 0.,
+         0., 1., 0.,
+         0., 0., 1.]
+projection_matrix:
+  rows: 3
+  cols: 4
+  data: [2369.31152,    0.     ,  740.5121 ,    0.     ,
+         0.     , 2368.61401,  614.00809,    0.     ,
+         0.     ,    0.     ,    1.     ,    0.     ]
+#image_width: 1280
+#image_height: 1024
+#camera_name: camera
+#camera_matrix:
+#  rows: 3
+#  cols: 3
+#  data: [1275.46051,    0.     ,  664.95716,
+#         0.     , 1275.99356,  520.90722,
+#         0.     ,    0.     ,    1.     ]
+#distortion_model: plumb_bob
+#distortion_coefficients:
+#  rows: 1
+#  cols: 5
+#  data: [-0.213185, 0.161272, 0.000642, -0.000513, 0.000000]
+#rectification_matrix:
+#  rows: 3
+#  cols: 3
+#  data: [1., 0., 0.,
+#         0., 1., 0.,
+#         0., 0., 1.]
+#projection_matrix:
+#  rows: 3
+#  cols: 4
+#  data: [1214.9126 ,    0.     ,  665.7812 ,    0.     ,
+#         0.     , 1234.00061,  521.37307,    0.     ,
+#         0.     ,    0.     ,    1.     ,    0.     ]
+#image_width: 1280
+#image_height: 1024
+#camera_name: camera
+#camera_matrix:
+#  rows: 3
+#  cols: 3
+#  data: [1744.624880642148, 0, 650.7685623013763, 0, 1745.175704067885, 513.2061066667704, 0, 0, 1]
+#distortion_model: plumb_bob
+#distortion_coefficients:
+#  rows: 1
+#  cols: 5
+#  data: [-0.1036262196244241, 0.1728866498341348, 0.0005867428389317755, -0.0004888755074307688, 0]
+#rectification_matrix:
+#  rows: 3
+#  cols: 3
+#  data: [1, 0, 0, 0, 1, 0, 0, 0, 1]
+#projection_matrix:
+#  rows: 3
+#  cols: 4
+#  data: [1724.138549804688, 0, 650.0733073638876, 0, 0, 1729.981079101562, 512.9925411514705, 0, 0, 0, 1, 0]
