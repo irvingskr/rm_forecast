@@ -18,6 +18,7 @@
 #include <rm_msgs/TargetDetection.h>
 #include <rm_msgs/TargetDetectionArray.h>
 #include <rm_msgs/TrackData.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 #include <ros/ros.h>
 #include <thread>
 #include <vector>
@@ -30,7 +31,7 @@ class SpinObserver
 public:
     SpinObserver();
 
-    void update(rm_msgs::TrackData & target_msg, ros::Time &current_time, double &max_jump_angle, double &max_jump_period, double &allow_following_range);
+    void update(rm_msgs::TrackData & target_msg, geometry_msgs::TransformStamped & odom2pitch, ros::Time &current_time, double &max_jump_angle, double &max_jump_period, double &allow_following_range);
 
 //    auto_aim_interfaces::msg::SpinInfo spin_info_msg;
     rm_msgs::TrackData spin_track_data;

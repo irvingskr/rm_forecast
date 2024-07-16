@@ -50,7 +50,7 @@ void Forecast_Node::initialize(ros::NodeHandle& nh)
 
   // Q - process noise covariance matrix
   Eigen::DiagonalMatrix<double, 6> q;
-  q.diagonal() << 0.01, 0.01, 0.01, 0.1, 0.1, 0.1;
+  q.diagonal() << 700, 700, 700, 1400, 1400, 1400;
 
   // R - measurement noise covariance matrix
   Eigen::DiagonalMatrix<double, 3> r;
@@ -62,32 +62,38 @@ void Forecast_Node::initialize(ros::NodeHandle& nh)
 
   kf_matrices_ = KalmanFilterMatrices{ f, h, q, r, p }; /***初始化卡尔曼滤波初始参数***/
 
-  if (!nh.getParam("max_match_distance", max_match_distance_))
-    ROS_WARN("No max match distance specified");
-  ROS_INFO("66%lf", max_match_distance_);
-  if (!nh.getParam("tracking_threshold", tracking_threshold_))
-    ROS_WARN("No tracking threshold specified");
-  if (!nh.getParam("lost_threshold", lost_threshold_))
-    ROS_WARN("No lost threshold specified");
+  config_ = { .const_distance = getParam(nh, "const_distance", 0.),
+              .outpost_radius = getParam(nh, "outpost_radius", 0.1),
+              .rotate_speed = getParam(nh, "rotate_speed", 0.1),
+              .y_thred = getParam(nh, "y_thred", 0.),
+              .time_thred = getParam(nh, "time_thred", 0.),
+              .time_offset = getParam(nh, "time_offset", 0.),
+              .ramp_time_offset = getParam(nh, "ramp_time_offset", 0.),
+              .ramp_threshold = getParam(nh, "ramp_threshold", 0.),
+              .ring_highland_distance_offset = getParam(nh, "ring_highland_distance_offset", 0.),
+              .source_island_distance_offset = getParam(nh, "source_island_distance_offset", 0.),
+              .min_target_quantity = getParam(nh, "min_target_quantity", 0),
+              .forecast_readied = getParam(nh, "forecast_readied", true),
+              .reset = getParam(nh, "reset", false) };
+  config_rt_buffer_.initRT(config_);
 
-  if (!nh.getParam("max_jump_angle", max_jump_angle_))
-    ROS_WARN("No max_jump_angle specified");
-  if (!nh.getParam("max_jump_period", max_jump_period_))
-    ROS_WARN("No max_jump_period_ specified");
-  if (!nh.getParam("allow_following_range", allow_following_range_))
-    ROS_WARN("No allow_following_range specified");
-  if (!nh.getParam("y_thred", y_thred_))
-    ROS_WARN("No y_thred specified");
-  if (!nh.getParam("time_thred", time_thred_))
-    ROS_WARN("No time_thred specified");
-  if (!nh.getParam("allow_following_range", allow_following_range_))
-    ROS_WARN("No allow_following_range specified");
-
-  XmlRpc::XmlRpcValue xml_rpc_value;
-  if (!nh.getParam("interpolation_fly_time", xml_rpc_value))
+  XmlRpc::XmlRpcValue xml_rpc_value1;
+  if (!nh.getParam("interpolation_fly_time", xml_rpc_value1))
     ROS_ERROR("Fly time no defined (namespace: %s)", nh.getNamespace().c_str());
   else
-    interpolation_fly_time_.init(xml_rpc_value);
+    interpolation_fly_time_.init(xml_rpc_value1);
+
+  XmlRpc::XmlRpcValue xml_rpc_value2;
+  if (!nh.getParam("interpolation_base_distance_on_ring_highland", xml_rpc_value2))
+    ROS_ERROR("Base distance on ring highland no defined (namespace: %s)", nh.getNamespace().c_str());
+  else
+    interpolation_base_distance_on_ring_highland_.init(xml_rpc_value2);
+
+  XmlRpc::XmlRpcValue xml_rpc_value3;
+  if (!nh.getParam("interpolation_base_distance_on_resource_island", xml_rpc_value3))
+    ROS_ERROR("Base distance resource island no defined (namespace: %s)", nh.getNamespace().c_str());
+  else
+    interpolation_base_distance_on_resource_island_.init(xml_rpc_value3);
 
   tracker_ = std::make_unique<Tracker>(kf_matrices_);
 
@@ -99,53 +105,76 @@ void Forecast_Node::initialize(ros::NodeHandle& nh)
 
   tf_buffer_ = new tf2_ros::Buffer(ros::Duration(10));
   tf_listener_ = new tf2_ros::TransformListener(*tf_buffer_);
+  tf_broadcaster_.init(nh);
   ROS_INFO("armor type is : %d", armor_type_);
 
-  enemy_targets_sub_ = nh.subscribe("/detection", 1, &Forecast_Node::speedCallback, this);
-  outpost_targets_sub_ = nh.subscribe("/detection", 1, &Forecast_Node::outpostCallback, this);
+  //  enemy_targets_sub_ = nh.subscribe("/detection", 1, &Forecast_Node::speedCallback, this);
+  outpost_targets_sub_ = nh.subscribe("/outpost_detection", 1, &Forecast_Node::outpostCallback, this);
   track_pub_ = nh.advertise<rm_msgs::TrackData>("/track", 10);
   suggest_fire_pub_ = nh.advertise<std_msgs::Bool>("suggest_fire", 1);
+  duration_pub_ = nh.advertise<std_msgs::Float64>("duration", 1);
   fly_time_sub_ =
       nh.subscribe("/controllers/gimbal_controller/bullet_solver/fly_time", 10, &Forecast_Node::flyTimeCB, this);
 }
 
 void Forecast_Node::forecastconfigCB(rm_forecast::ForecastConfig& config, uint32_t level)
 {
-  //          target_type_ = config.target_color;
-  /// track
-  max_match_distance_ = config.max_match_distance;
-  tracking_threshold_ = config.tracking_threshold;
-  lost_threshold_ = config.lost_threshold;
-
-  /// spin_observer
-  max_jump_angle_ = config.max_jump_angle;
-  max_jump_period_ = config.max_jump_period;
-  allow_following_range_ = config.allow_following_range;
-
-  /// outpost
-  forecast_readied_ = config.forecast_readied;
-  min_target_quantity_ = config.min_target_quantity;
-  y_thred_ = config.y_thred;
-  time_thred_ = config.time_thred;
-  time_offset_ = config.time_offset;
+  ROS_INFO("[Forecast] Dynamic params change");
+  if (!dynamic_reconfig_initialized_)
+  {
+    Config init_config = *config_rt_buffer_.readFromNonRT();  // config init use yaml
+    config.const_distance = init_config.const_distance;
+    config.outpost_radius = init_config.outpost_radius;
+    config.rotate_speed = init_config.rotate_speed;
+    config.time_thred = init_config.time_thred;
+    config.time_offset = init_config.time_offset;
+    config.ramp_time_offset = init_config.ramp_time_offset;
+    config.ramp_threshold = init_config.ramp_threshold;
+    config.min_target_quantity = init_config.min_target_quantity;
+    config.forecast_readied = init_config.forecast_readied;
+    config.reset = init_config.reset;
+    config.y_thred = init_config.y_thred;
+    config.ring_highland_distance_offset = init_config.ring_highland_distance_offset;
+    config.source_island_distance_offset = init_config.source_island_distance_offset;
+    dynamic_reconfig_initialized_ = true;
+  }
+  Config config_non_rt{
+    .const_distance = config.const_distance,
+    .outpost_radius = config.outpost_radius,
+    .rotate_speed = config.rotate_speed,
+    .y_thred = config.y_thred,
+    .time_thred = config.time_thred,
+    .time_offset = config.time_offset,
+    .ramp_time_offset = config.ramp_time_offset,
+    .ramp_threshold = config.ramp_threshold,
+    .ring_highland_distance_offset = config.ring_highland_distance_offset,
+    .source_island_distance_offset = config.source_island_distance_offset,
+    .next_thred = config.next_thred,
+    .min_target_quantity = config.min_target_quantity,
+    .forecast_readied = config.forecast_readied,
+    .reset = config.reset,
+  };
+  config_rt_buffer_.writeFromNonRT(config_non_rt);
 }
 
 void Forecast_Node::outpostCallback(const rm_msgs::TargetDetectionArray::Ptr& msg)
 {
-  if (!armor_type_)
-    return;
+  config_ = *config_rt_buffer_.readFromRT();
 
   // Initialize track data
   rm_msgs::TrackData track_data;
-  track_data.header.frame_id = "base_link";
+  track_data.header.frame_id = "odom";
   track_data.header.stamp = target_array_.header.stamp;
   track_data.id = 0;
 
   double duration = (ros::Time::now() - last_min_time_).toSec();
+  std_msgs::Float64 duration_msg;
+  duration_msg.data = duration;
+  duration_pub_.publish(duration_msg);
   std_msgs::Bool circle_suggest_fire;
   circle_suggest_fire.data = false;
 
-  if (abs(fly_time_ - duration) < time_thred_)
+  if (abs(fly_time_ - duration) < config_.time_thred)
   {
     circle_suggest_fire.data = true;
   }
@@ -161,18 +190,57 @@ void Forecast_Node::outpostCallback(const rm_msgs::TargetDetectionArray::Ptr& ms
   // Tranform armor position from image frame to world coordinate
   this->target_array_.detections.clear();
   target_array_.header = msg->header;
+  bool outpost_flag = false;
   for (const auto& detection : msg->detections)
   {
+    if (detection.id == 6)
+    {
+      outpost_flag = true;
+    }
+    else
+    {
+      continue;
+    }
+
+    double base_roll;
+    geometry_msgs::TransformStamped odom2base;
+    try
+    {
+      double pitch, yaw;
+      quatToRPY(tf_buffer_->lookupTransform("odom", "base_link", msg->header.stamp, ros::Duration(1)).transform.rotation,
+                base_roll, pitch, yaw);
+      ROS_INFO_STREAM("base_roll" << base_roll);
+    }
+    catch (tf2::TransformException& ex)
+    {
+      ROS_WARN("%s", ex.what());
+    }
+
+    /*判断斜坡*/
+    if (std::abs(base_roll) > config_.ramp_threshold)
+    {
+      ramp_flag_ = true;
+      ROS_INFO_STREAM("In ramp");
+    }
+    else
+    {
+      ramp_flag_ = false;
+      ROS_INFO_STREAM("In flat");
+    }
+
     rm_msgs::TargetDetection detection_temp;
-    geometry_msgs::PoseStamped pose_in;
-    geometry_msgs::PoseStamped pose_out;
-    pose_in.header.frame_id = msg->header.frame_id;
+    geometry_msgs::PoseStamped pose_in, pose_out;
+    if (ramp_flag_)
+      pose_in.header.frame_id = "camera2_optical_frame";
+    else
+      pose_in.header.frame_id = msg->header.frame_id;
     pose_in.header.stamp = msg->header.stamp;
     pose_in.pose = detection.pose;
     try
     {
+      ROS_INFO_STREAM("frame_id" << pose_in.header.frame_id);
       geometry_msgs::TransformStamped transform =
-          tf_buffer_->lookupTransform("base_link", pose_in.header.frame_id, msg->header.stamp, ros::Duration(1));
+          tf_buffer_->lookupTransform("odom", pose_in.header.frame_id, msg->header.stamp, ros::Duration(1));
       tf2::doTransform(pose_in.pose, pose_out.pose, transform);
     }
     catch (tf2::TransformException& ex)
@@ -184,27 +252,15 @@ void Forecast_Node::outpostCallback(const rm_msgs::TargetDetectionArray::Ptr& ms
     detection_temp.confidence = detection.confidence;
     detection_temp.pose = pose_out.pose;
     target_array_.detections.emplace_back(detection_temp);
+
+    std::cout << "base_roll is " << base_roll << std::endl;
   }
+  /*识别id不为前哨站*/
+  if (!outpost_flag)
+    return;
 
-  if (forecast_readied_)
+  if (config_.forecast_readied)
   {
-    geometry_msgs::PoseStamped pose_in;
-    geometry_msgs::PoseStamped pose_out;
-    pose_in.header.frame_id = "base_link";
-    pose_in.header.stamp = msg->header.stamp;
-    pose_in.pose = target_array_.detections[0].pose;
-    try
-    {
-      geometry_msgs::TransformStamped transform =
-          tf_buffer_->lookupTransform("base_link", pose_in.header.frame_id, msg->header.stamp, ros::Duration(1));
-      tf2::doTransform(pose_in.pose, pose_out.pose, transform);
-    }
-    catch (tf2::TransformException& ex)
-    {
-      ROS_WARN("%s", ex.what());
-    }
-    target_array_.detections[0].pose = pose_out.pose;
-
     geometry_msgs::Quaternion qua2;
     qua2.x = msg->detections[0].pose.orientation.x;
     qua2.y = msg->detections[0].pose.orientation.y;
@@ -214,41 +270,90 @@ void Forecast_Node::outpostCallback(const rm_msgs::TargetDetectionArray::Ptr& ms
     double roll, pitch, yaw;
     quatToRPY(qua2, roll, pitch, yaw);
 
-    if (std::abs(pitch) < y_thred_)
+    /*判断是否正对*/
+    if (std::abs(pitch) < config_.y_thred)
     {
-      min_distance_x_ = target_array_.detections[0].pose.position.x;
-      min_distance_y_ = target_array_.detections[0].pose.position.y;
-      min_distance_z_ = target_array_.detections[0].pose.position.z;
-
-      target_quantity_++;
-      if (target_quantity_ > min_target_quantity_)
+      pitch_enter_time_ = ros::Time::now().toSec();
+      /*正对并且与上次正对时间差0.3*/
+      if (pitch_enter_time_ - last_pitch_time_ > config_.next_thred)
       {
         target_quantity_ = 0;
-        last_min_time_ = ros::Time::now();
       }
+
+      /*上述条件都满足则记录为下一块正对装甲版*/
+      if (target_quantity_ == 0)
+      {
+        last_pitch_time_ = pitch_enter_time_;
+        min_camera_distance_ = msg->detections[0].pose.position.z;
+      }
+
+      ROS_INFO("test");
+
+      /*在正对角度阈值内不断更新正对xyz缓存*/
+      if (ros::Time::now().toSec() - last_pitch_time_ < 0.2 && msg->detections[0].pose.position.z < min_camera_distance_)
+      {
+        temp_min_distance_x_ = target_array_.detections[0].pose.position.x;
+        temp_min_distance_y_ = target_array_.detections[0].pose.position.y;
+        temp_min_distance_z_ = target_array_.detections[0].pose.position.z;
+        min_camera_distance_ = msg->detections[0].pose.position.z;
+        temp_min_time_ = ros::Time::now();
+      }
+
+      /*在同一块装甲版的正对时间大于一定阈值则认为找到正对时的xyz*/
+      if (target_quantity_ > config_.min_target_quantity)
+      {
+        last_min_time_ = temp_min_time_;
+        min_distance_x_ = temp_min_distance_x_;
+        min_distance_y_ = temp_min_distance_y_;
+        min_distance_z_ = temp_min_distance_z_;
+        get_target_ = true;
+      }
+
+      target_quantity_++;
     }
 
-    fly_time_ = (time_offset_ - bullet_solver_fly_time_ - 0.239);
+    /*计算等待时间*/
+    if (ramp_flag_)
+    {
+      /*两个正对状态相差时间 - 飞行时间 - 发蛋延迟*/
+      fly_time_ = (config_.ramp_time_offset - bullet_solver_fly_time_ - 0.119);
+      ROS_INFO_STREAM("In ramp");
+    }
+    else
+    {
+      fly_time_ = (config_.time_offset - bullet_solver_fly_time_ - 0.119);
+      ROS_INFO_STREAM("In flat");
+    }
+    ROS_INFO("test2");
 
-    track_data.id = 6;
-    track_data.header.frame_id = "base_link";
-    track_data.target_pos.x = min_distance_x_;
-    track_data.target_pos.y = min_distance_y_;
-    track_data.target_pos.z = min_distance_z_;
-
-    track_data.target_vel.x = 0;
-    track_data.target_vel.y = 0;
-    track_data.target_vel.z = 0;
+    track_data.id = target_array_.detections[0].id;
+    track_data.header.frame_id = "odom";
+    if (!get_target_)
+    {
+      track_data.position.x = target_array_.detections[0].pose.position.x;
+      track_data.position.y = target_array_.detections[0].pose.position.y;
+      track_data.position.z = target_array_.detections[0].pose.position.z;
+    }
+    else
+    {
+      track_data.position.x = min_distance_x_;
+      track_data.position.y = min_distance_y_;
+      track_data.position.z = min_distance_z_;
+    }
+    track_data.velocity.x = 0;
+    track_data.velocity.y = 0;
+    track_data.velocity.z = 0;
+    track_data.armors_num = 2;
   }
   else
   {
-    track_data.id = 7;
-    track_data.target_pos.x = target_array_.detections[0].pose.position.x;
-    track_data.target_pos.y = target_array_.detections[0].pose.position.y;
-    track_data.target_pos.z = target_array_.detections[0].pose.position.z;
-    track_data.target_vel.x = 0;
-    track_data.target_vel.y = 0;
-    track_data.target_vel.z = 0;
+    track_data.id = target_array_.detections[0].id;
+    track_data.position.x = target_array_.detections[0].pose.position.x;
+    track_data.position.y = target_array_.detections[0].pose.position.y;
+    track_data.position.z = target_array_.detections[0].pose.position.z;
+    track_data.velocity.x = 0;
+    track_data.velocity.y = 0;
+    track_data.velocity.z = 0;
   }
 
   track_pub_.publish(track_data);
@@ -259,6 +364,8 @@ void Forecast_Node::speedCallback(const rm_msgs::TargetDetectionArray::Ptr& msg)
   if (armor_type_)
     return;
 
+  config_ = *config_rt_buffer_.readFromRT();
+
   rm_msgs::TrackData track_data;
   track_data.header.stamp = msg->header.stamp;
 
@@ -267,6 +374,16 @@ void Forecast_Node::speedCallback(const rm_msgs::TargetDetectionArray::Ptr& msg)
     track_data.id = 0;
     track_pub_.publish(track_data);
     return;
+  }
+
+  string target_link;
+  if (msg->header.frame_id == "camera2_optical_frame")
+  {
+    target_link = "yaw";
+  }
+  else
+  {
+    target_link = "odom";
   }
 
   // Tranform armor position from image frame to world coordinate
@@ -283,7 +400,7 @@ void Forecast_Node::speedCallback(const rm_msgs::TargetDetectionArray::Ptr& msg)
     try
     {
       geometry_msgs::TransformStamped transform =
-          tf_buffer_->lookupTransform("odom", pose_in.header.frame_id, msg->header.stamp, ros::Duration(1));
+          tf_buffer_->lookupTransform(target_link, pose_in.header.frame_id, msg->header.stamp, ros::Duration(1));
       tf2::doTransform(pose_in.pose, pose_out.pose, transform);
     }
     catch (tf2::TransformException& ex)
@@ -322,38 +439,121 @@ void Forecast_Node::speedCallback(const rm_msgs::TargetDetectionArray::Ptr& msg)
   }
   last_time_ = msg->header.stamp;
 
-  if (tracking_)
+  track_data.header.frame_id = "odom";
+  track_data.header.stamp = msg->header.stamp;
+  track_data.id = tracker_->tracking_id;
+  if (msg->header.frame_id == "camera2_optical_frame")
   {
-    //            target_msg.position.x = tracker_->target_state(0);
-    //            target_msg.position.y = tracker_->target_state(1);
-    //            target_msg.position.z = tracker_->target_state(2);
-    //            target_msg.velocity.x = tracker_->target_state(3);
-    //            target_msg.velocity.y = tracker_->target_state(4);
-    //            target_msg.velocity.z = tracker_->target_state(5);
     track_data.header.frame_id = "odom";
-    track_data.header.stamp = msg->header.stamp;  //??
-    track_data.id = tracker_->tracking_id;
-    track_data.target_pos.x = tracker_->target_state(0);
-    track_data.target_pos.y = tracker_->target_state(1);
-    track_data.target_pos.z = tracker_->target_state(2);
-    track_data.target_vel.x = tracker_->target_state(3);
-    track_data.target_vel.y = tracker_->target_state(4);
-    track_data.target_vel.z = tracker_->target_state(5);
-  }
+    double track_pos[3]{ target_array_.detections[0].pose.position.x, target_array_.detections[0].pose.position.y,
+                         target_array_.detections[0].pose.position.z };
+    track_filter_.input(track_pos);
+    detection_filter_.input(msg->detections[0].pose.position.z);
 
-  /***根据观察旋转的结果决定是否建议开火***/
-  if (allow_spin_observer_ && spin_observer_)
+    //    track_data.position.x = track_filter_.x();
+    //    track_data.position.z = track_filter_.z();
+    //    track_data.position.y = track_filter_.y();
+
+    //    track_data.position.x = target_array_.detections[0].pose.position.x;
+    //    track_data.position.z = target_array_.detections[0].pose.position.z;
+    //    track_data.position.y = target_array_.detections[0].pose.position.y;
+    geometry_msgs::TransformStamped odom2yaw;
+    geometry_msgs::TransformStamped odom2virtual;
+    tf2::Quaternion q;
+    double yaw{};
+    try
+    {
+      double roll, pitch;
+      odom2yaw = tf_buffer_->lookupTransform("odom", "yaw", msg->header.stamp);
+      quatToRPY(odom2yaw.transform.rotation, roll, pitch, yaw);
+    }
+    catch (tf2::TransformException& ex)
+    {
+      ROS_WARN("%s", ex.what());
+    }
+    q.setRPY(0., 0., yaw);
+
+    odom2virtual.header.frame_id = "odom";
+    odom2virtual.child_frame_id = "virtual_frame";
+    odom2virtual.header.stamp = msg->header.stamp;
+    odom2virtual.transform.translation = odom2yaw.transform.translation;
+    odom2virtual.transform.rotation.x = q.x();
+    odom2virtual.transform.rotation.y = q.y();
+    odom2virtual.transform.rotation.z = q.z();
+    odom2virtual.transform.rotation.w = q.w();
+
+    tf_buffer_->setTransform(odom2virtual, "rm_forecast");
+    //    tf_broadcaster_.sendTransform(odom2virtual);
+
+    target_.y = target_array_.detections[0].pose.position.y;
+    //    target_.x = config_.const_distance + config_.ring_highland_distance_offset;
+    //    target_.z = 0.71;
+
+    if (msg->detections[0].pose.position.z > 8.3)
+    {
+      target_.x = interpolation_base_distance_on_resource_island_.output(detection_filter_.output()) +
+                  config_.source_island_distance_offset;
+      target_.z = 0.71;
+    }
+    else
+    {
+      target_.x = interpolation_base_distance_on_ring_highland_.output(detection_filter_.output()) +
+                  +config_.ring_highland_distance_offset;
+      target_.z = 0.14;
+    }
+    tf2::doTransform(target_, track_data.position, odom2virtual);
+    track_data.velocity.x = 0;
+    track_data.velocity.y = 0;
+    track_data.velocity.z = 0;
+  }
+  else if (tracking_)
   {
-    //        spin_observer_->max_jump_angle =
-    //        get_parameter("spin_observer.max_jump_angle").as_double();
-    //        spin_observer_->max_jump_period =
-    //        get_parameter("spin_observer.max_jump_period").as_double();
-    //        spin_observer_->allow_following_range =
-    //        get_parameter("spin_observer.allow_following_range").as_double();
+    //    track_data.position.x = tracker_->target_state(0);
+    //    track_data.position.y = tracker_->target_state(1);
+    //    track_data.position.z = tracker_->target_state(2);
+    //    track_data.velocity.x = tracker_->target_state(3);
+    //    track_data.velocity.y = tracker_->target_state(4);
+    //    track_data.velocity.z = tracker_->target_state(5);
+    track_data.position.x = tracker_->target_state(0);
+    track_data.position.y = tracker_->target_state(1);
+    track_data.position.z = tracker_->target_state(2);
+    track_data.velocity.x = tracker_->target_state(3);
+    track_data.velocity.y = tracker_->target_state(4);
+    track_data.velocity.z = tracker_->target_state(5);
+    track_data.armors_num = 2;
+    //    track_data.velocity.x = 0;
+    //    track_data.velocity.y = 0;
+    //    track_data.velocity.z = 0;
 
-    spin_observer_->update(track_data, msg->header.stamp, max_jump_angle_, max_jump_period_, allow_following_range_);
-    //        spin_info_pub_->publish(spin_observer_->spin_info_msg);
+    geometry_msgs::TransformStamped odom2pitch = tf_buffer_->lookupTransform("odom", "pitch", msg->header.stamp);
+    /***根据观察旋转的结果决定是否建议开火***/
+    if (allow_spin_observer_ && spin_observer_)
+    {
+      //        spin_observer_->max_jump_angle =
+      //        get_parameter("spin_observer.max_jump_angle").as_double();
+      //        spin_observer_->max_jump_period =
+      //        get_parameter("spin_observer.max_jump_period").as_double();
+      //        spin_observer_->allow_following_range =
+      //        get_parameter("spin_observer.allow_following_range").as_double();
+
+      //      spin_observer_->update(track_data, odom2pitch, msg->header.stamp, max_jump_angle_, max_jump_period_,
+      //                             allow_following_range_);
+      //        spin_info_pub_->publish(spin_observer_->spin_info_msg);
+    }
   }
+
+  geometry_msgs::TransformStamped transform;
+  transform.header.frame_id = "odom";
+  transform.header.stamp = msg->header.stamp;
+  transform.child_frame_id = "target_link";
+  transform.transform.translation.x = track_data.position.x;
+  transform.transform.translation.y = track_data.position.y;
+  transform.transform.translation.z = track_data.position.z;
+  transform.transform.rotation.x = 0.;
+  transform.transform.rotation.y = 0.;
+  transform.transform.rotation.z = 0.;
+  transform.transform.rotation.w = 1.;
+  tf_broadcaster_.sendTransform(transform);
 
   track_pub_.publish(track_data);
 }

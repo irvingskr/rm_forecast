@@ -1,13 +1,39 @@
 max_match_distance: 0.2
 tracking_threshold: 5
 lost_threshold: 5
-max_jump_angle: 0.05
+max_jump_angle: 0.02
 max_jump_period: 0.8
-allow_following_range: 0.3
-y_thred: 0.03
+allow_following_range: 0.5
+y_thred: 0.15
 time_thred: 0.01
+time_offset: 0.38
+ramp_time_offset: 0.39
+ramp_threshold: 0.05
+min_target_quantity: 3
+const_distance: 7.3
+outpost_radius: 0.3
+rotate_speed: 0.1
+next_thred: 0.3
+ring_highland_distance_offset: -0.18
+source_island_distance_offset: -0.35
+forecast_readied: true
+reset: false
 interpolation_fly_time:
   - [ 3.5,0.40 ]
   - [ 4.0,0.366666 ]
   - [ 4.5,0.337 ]
   - [ 5.0,0.30 ]
+interpolation_base_distance_on_ring_highland:
+  - [ 7.128,6.2 ]
+  - [ 7.43,6.5 ]
+  - [ 7.67,6.65 ]
+  - [ 7.72,6.75 ]
+interpolation_base_distance_on_resource_island:
+  #  for vedio
+  - [ 8.985, 6.73 ]
+  - [ 9.225,6.95 ]
+  - [ 9.88,7.2 ]
+
+#  for real
+#  - [ 9.22,7.0 ]
+#  - [ 9.9,7.3 ]
