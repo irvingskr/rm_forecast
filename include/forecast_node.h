@@ -110,7 +110,7 @@ private:
                                           const rm_msgs::TargetDetection point_3,
                                           const rm_msgs::TargetDetection point_4);
 
-  bool ramp_flag_{};
+  bool ramp_flag_{}, outpost_flag_{}, base_flag_{};
   int armor_type_ = 0, target_quantity_ = 0;
   double min_distance_x_{}, min_distance_y_{}, min_distance_z_{}, temp_min_distance_x_{}, temp_min_distance_y_{},
       temp_min_distance_z_{};

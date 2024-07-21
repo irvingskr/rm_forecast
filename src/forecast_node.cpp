@@ -166,19 +166,8 @@ void Forecast_Node::outpostCallback(const rm_msgs::TargetDetectionArray::Ptr& ms
   track_data.header.frame_id = "odom";
   track_data.header.stamp = target_array_.header.stamp;
   track_data.id = 0;
-
-  double duration = (ros::Time::now() - last_min_time_).toSec();
-  std_msgs::Float64 duration_msg;
-  duration_msg.data = duration;
-  duration_pub_.publish(duration_msg);
-  std_msgs::Bool circle_suggest_fire;
-  circle_suggest_fire.data = false;
-
-  if (abs(fly_time_ - duration) < config_.time_thred)
-  {
-    circle_suggest_fire.data = true;
-  }
-  suggest_fire_pub_.publish(circle_suggest_fire);
+  outpost_flag_ = false;
+  base_flag_ = false;
 
   // No target
   if (msg->detections.empty())
@@ -190,12 +179,16 @@ void Forecast_Node::outpostCallback(const rm_msgs::TargetDetectionArray::Ptr& ms
   // Tranform armor position from image frame to world coordinate
   this->target_array_.detections.clear();
   target_array_.header = msg->header;
-  bool outpost_flag = false;
+
   for (const auto& detection : msg->detections)
   {
     if (detection.id == 6)
     {
-      outpost_flag = true;
+      outpost_flag_ = true;
+    }
+    else if (detection.id == 8)
+    {
+      base_flag_ = true;
     }
     else
     {
@@ -256,107 +249,138 @@ void Forecast_Node::outpostCallback(const rm_msgs::TargetDetectionArray::Ptr& ms
     std::cout << "base_roll is " << base_roll << std::endl;
   }
   /*识别id不为前哨站*/
-  if (!outpost_flag)
-    return;
-
-  if (config_.forecast_readied)
+  if (outpost_flag_)
   {
-    geometry_msgs::Quaternion qua2;
-    qua2.x = msg->detections[0].pose.orientation.x;
-    qua2.y = msg->detections[0].pose.orientation.y;
-    qua2.z = msg->detections[0].pose.orientation.z;
-    qua2.w = msg->detections[0].pose.orientation.w;
-
-    double roll, pitch, yaw;
-    quatToRPY(qua2, roll, pitch, yaw);
-
-    /*判断是否正对*/
-    if (std::abs(pitch) < config_.y_thred)
+    if (config_.forecast_readied)
     {
-      pitch_enter_time_ = ros::Time::now().toSec();
-      /*正对并且与上次正对时间差0.3*/
-      if (pitch_enter_time_ - last_pitch_time_ > config_.next_thred)
+      geometry_msgs::Quaternion qua2;
+      qua2.x = msg->detections[0].pose.orientation.x;
+      qua2.y = msg->detections[0].pose.orientation.y;
+      qua2.z = msg->detections[0].pose.orientation.z;
+      qua2.w = msg->detections[0].pose.orientation.w;
+
+      double roll, pitch, yaw;
+      quatToRPY(qua2, roll, pitch, yaw);
+
+      /*判断是否正对*/
+      if (std::abs(pitch) < config_.y_thred)
       {
-        target_quantity_ = 0;
+        pitch_enter_time_ = ros::Time::now().toSec();
+        /*正对并且与上次正对时间差0.3*/
+        if (pitch_enter_time_ - last_pitch_time_ > config_.next_thred)
+        {
+          target_quantity_ = 0;
+        }
+
+        /*上述条件都满足则记录为下一块正对装甲版*/
+        if (target_quantity_ == 0)
+        {
+          last_pitch_time_ = pitch_enter_time_;
+          min_camera_distance_ = msg->detections[0].pose.position.z;
+        }
+
+        ROS_INFO("test");
+
+        /*在正对角度阈值内不断更新正对xyz缓存*/
+        if (ros::Time::now().toSec() - last_pitch_time_ < 0.2 &&
+            msg->detections[0].pose.position.z < min_camera_distance_)
+        {
+          temp_min_distance_x_ = target_array_.detections[0].pose.position.x;
+          temp_min_distance_y_ = target_array_.detections[0].pose.position.y;
+          temp_min_distance_z_ = target_array_.detections[0].pose.position.z;
+          min_camera_distance_ = msg->detections[0].pose.position.z;
+          temp_min_time_ = ros::Time::now();
+        }
+
+        /*在同一块装甲版的正对时间大于一定阈值则认为找到正对时的xyz*/
+        if (target_quantity_ > config_.min_target_quantity)
+        {
+          last_min_time_ = temp_min_time_;
+          min_distance_x_ = temp_min_distance_x_;
+          min_distance_y_ = temp_min_distance_y_;
+          min_distance_z_ = temp_min_distance_z_;
+          get_target_ = true;
+        }
+
+        target_quantity_++;
       }
 
-      /*上述条件都满足则记录为下一块正对装甲版*/
-      if (target_quantity_ == 0)
+      /*计算等待时间*/
+      if (ramp_flag_)
       {
-        last_pitch_time_ = pitch_enter_time_;
-        min_camera_distance_ = msg->detections[0].pose.position.z;
+        /*两个正对状态相差时间 - 飞行时间 - 发蛋延迟*/
+        fly_time_ = (config_.ramp_time_offset - bullet_solver_fly_time_ - 0.119);
+        ROS_INFO_STREAM("In ramp");
       }
-
-      ROS_INFO("test");
-
-      /*在正对角度阈值内不断更新正对xyz缓存*/
-      if (ros::Time::now().toSec() - last_pitch_time_ < 0.2 && msg->detections[0].pose.position.z < min_camera_distance_)
+      else
       {
-        temp_min_distance_x_ = target_array_.detections[0].pose.position.x;
-        temp_min_distance_y_ = target_array_.detections[0].pose.position.y;
-        temp_min_distance_z_ = target_array_.detections[0].pose.position.z;
-        min_camera_distance_ = msg->detections[0].pose.position.z;
-        temp_min_time_ = ros::Time::now();
+        fly_time_ = (config_.time_offset - bullet_solver_fly_time_ - 0.119);
+        ROS_INFO_STREAM("In flat");
       }
+      ROS_INFO("test2");
 
-      /*在同一块装甲版的正对时间大于一定阈值则认为找到正对时的xyz*/
-      if (target_quantity_ > config_.min_target_quantity)
+      track_data.id = target_array_.detections[0].id;
+      track_data.header.frame_id = "odom";
+      if (!get_target_)
       {
-        last_min_time_ = temp_min_time_;
-        min_distance_x_ = temp_min_distance_x_;
-        min_distance_y_ = temp_min_distance_y_;
-        min_distance_z_ = temp_min_distance_z_;
-        get_target_ = true;
+        track_data.position.x = target_array_.detections[0].pose.position.x;
+        track_data.position.y = target_array_.detections[0].pose.position.y;
+        track_data.position.z = target_array_.detections[0].pose.position.z;
       }
-
-      target_quantity_++;
-    }
-
-    /*计算等待时间*/
-    if (ramp_flag_)
-    {
-      /*两个正对状态相差时间 - 飞行时间 - 发蛋延迟*/
-      fly_time_ = (config_.ramp_time_offset - bullet_solver_fly_time_ - 0.119);
-      ROS_INFO_STREAM("In ramp");
+      else
+      {
+        track_data.position.x = min_distance_x_;
+        track_data.position.y = min_distance_y_;
+        track_data.position.z = min_distance_z_;
+      }
+      track_data.velocity.x = 0;
+      track_data.velocity.y = 0;
+      track_data.velocity.z = 0;
+      track_data.armors_num = 2;
     }
     else
     {
-      fly_time_ = (config_.time_offset - bullet_solver_fly_time_ - 0.119);
-      ROS_INFO_STREAM("In flat");
-    }
-    ROS_INFO("test2");
-
-    track_data.id = target_array_.detections[0].id;
-    track_data.header.frame_id = "odom";
-    if (!get_target_)
-    {
+      track_data.id = target_array_.detections[0].id;
       track_data.position.x = target_array_.detections[0].pose.position.x;
       track_data.position.y = target_array_.detections[0].pose.position.y;
       track_data.position.z = target_array_.detections[0].pose.position.z;
+      track_data.armors_num = 2;
+      track_data.velocity.x = 0;
+      track_data.velocity.y = 0;
+      track_data.velocity.z = 0;
     }
-    else
-    {
-      track_data.position.x = min_distance_x_;
-      track_data.position.y = min_distance_y_;
-      track_data.position.z = min_distance_z_;
-    }
-    track_data.velocity.x = 0;
-    track_data.velocity.y = 0;
-    track_data.velocity.z = 0;
-    track_data.armors_num = 2;
   }
-  else
+  else if (base_flag_)
   {
     track_data.id = target_array_.detections[0].id;
     track_data.position.x = target_array_.detections[0].pose.position.x;
     track_data.position.y = target_array_.detections[0].pose.position.y;
     track_data.position.z = target_array_.detections[0].pose.position.z;
+    track_data.armors_num = 2;
     track_data.velocity.x = 0;
     track_data.velocity.y = 0;
     track_data.velocity.z = 0;
   }
-
   track_pub_.publish(track_data);
+
+  std_msgs::Bool circle_suggest_fire;
+  circle_suggest_fire.data = false;
+  if (outpost_flag_)
+  {
+    double duration = (ros::Time::now() - last_min_time_).toSec();
+    std_msgs::Float64 duration_msg;
+    duration_msg.data = duration;
+    duration_pub_.publish(duration_msg);
+    if (abs(fly_time_ - duration) < config_.time_thred)
+    {
+      circle_suggest_fire.data = true;
+    }
+  }
+  else if (base_flag_)
+  {
+    circle_suggest_fire.data = true;
+  }
+  suggest_fire_pub_.publish(circle_suggest_fire);
 }
 
 void Forecast_Node::speedCallback(const rm_msgs::TargetDetectionArray::Ptr& msg)
