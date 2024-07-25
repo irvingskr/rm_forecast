@@ -166,8 +166,25 @@ void Forecast_Node::outpostCallback(const rm_msgs::TargetDetectionArray::Ptr& ms
   track_data.header.frame_id = "odom";
   track_data.header.stamp = target_array_.header.stamp;
   track_data.id = 0;
-  outpost_flag_ = false;
-  base_flag_ = false;
+
+  std_msgs::Bool circle_suggest_fire;
+  circle_suggest_fire.data = false;
+  if (outpost_flag_)
+  {
+    double duration = (ros::Time::now() - last_min_time_).toSec();
+    std_msgs::Float64 duration_msg;
+    duration_msg.data = duration;
+    duration_pub_.publish(duration_msg);
+    if (abs(fly_time_ - duration) < config_.time_thred)
+    {
+      circle_suggest_fire.data = true;
+    }
+  }
+  else if (base_flag_)
+  {
+    circle_suggest_fire.data = true;
+  }
+  suggest_fire_pub_.publish(circle_suggest_fire);
 
   // No target
   if (msg->detections.empty())
@@ -175,6 +192,9 @@ void Forecast_Node::outpostCallback(const rm_msgs::TargetDetectionArray::Ptr& ms
     track_pub_.publish(track_data);
     return;
   }
+
+  outpost_flag_ = false;
+  base_flag_ = false;
 
   // Tranform armor position from image frame to world coordinate
   this->target_array_.detections.clear();
@@ -362,25 +382,6 @@ void Forecast_Node::outpostCallback(const rm_msgs::TargetDetectionArray::Ptr& ms
     track_data.velocity.z = 0;
   }
   track_pub_.publish(track_data);
-
-  std_msgs::Bool circle_suggest_fire;
-  circle_suggest_fire.data = false;
-  if (outpost_flag_)
-  {
-    double duration = (ros::Time::now() - last_min_time_).toSec();
-    std_msgs::Float64 duration_msg;
-    duration_msg.data = duration;
-    duration_pub_.publish(duration_msg);
-    if (abs(fly_time_ - duration) < config_.time_thred)
-    {
-      circle_suggest_fire.data = true;
-    }
-  }
-  else if (base_flag_)
-  {
-    circle_suggest_fire.data = true;
-  }
-  suggest_fire_pub_.publish(circle_suggest_fire);
 }
 
 void Forecast_Node::speedCallback(const rm_msgs::TargetDetectionArray::Ptr& msg)
