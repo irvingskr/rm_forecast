@@ -186,6 +186,7 @@ void Forecast_Node::outpostCallback(const rm_msgs::TargetDetectionArray::Ptr& ms
   }
   suggest_fire_pub_.publish(circle_suggest_fire);
 
+  base_flag_ = false;
   // No target
   if (msg->detections.empty())
   {
@@ -194,7 +195,6 @@ void Forecast_Node::outpostCallback(const rm_msgs::TargetDetectionArray::Ptr& ms
   }
 
   outpost_flag_ = false;
-  base_flag_ = false;
 
   // Tranform armor position from image frame to world coordinate
   this->target_array_.detections.clear();
