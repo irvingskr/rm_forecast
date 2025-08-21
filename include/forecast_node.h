@@ -9,6 +9,7 @@
 #include "kalman_filter.h"
 #include "rm_common/filters/lp_filter.h"
 #include "std_msgs/Float32.h"
+#include <std_msgs/Float64.h>
 #include "tracker.h"
 #include <Eigen/Core>
 #include <Eigen/Dense>
@@ -85,6 +86,7 @@ private:
   cv::Mat raw_img_;
   rm_msgs::TargetDetectionArray target_array_;
   ros::Subscriber points_targets_sub_;
+  ros::Subscriber fly_time_sub_;
   ros::Publisher debug_pub_;
   ros::Publisher track_pub_;
   ros::NodeHandle nh_;
@@ -111,6 +113,8 @@ private:
   bool tracking_{};
 
   Target hit_target_;
+  Target hit_target_odom_;
+  geometry_msgs::Pose src_pose_, transform_pose_;
 
   bool dynamic_reconfig_initialized_ = false;
   void forecastconfigCB(rm_forecast::ForecastConfig &config, uint32_t level);
@@ -124,6 +128,7 @@ private:
 
   /// draw reproject
   void imgCallback(const sensor_msgs::ImageConstPtr& img, const sensor_msgs::CameraInfoConstPtr& info);
+  void flyTimeCB(const std_msgs::Float64ConstPtr& msg);
   void drawCallback();
 
 
@@ -141,6 +146,7 @@ private:
 
   float getAngle();
 
+  double fly_time_{};
   bool speed_init_flag_ = false;
   bool skip_flag_ = false;
   Target prev_fan_{};

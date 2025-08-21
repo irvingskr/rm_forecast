@@ -154,6 +154,8 @@ void Forecast_Node::initialize(ros::NodeHandle& nh)
 
   it_ = make_shared<image_transport::ImageTransport>(nh_);
   img_sub_ = it_->subscribeCamera("/hk_camera/image_raw", 100, &Forecast_Node::imgCallback, this);
+  fly_time_sub_ =
+      nh.subscribe("/controllers/gimbal_controller/bullet_solver/fly_time", 10, &Forecast_Node::flyTimeCB, this);
   draw_pub_ = it_->advertise("reproject_image", 1);
 }
 
@@ -322,6 +324,26 @@ void Forecast_Node::pointsCallback(const rm_msgs::TargetDetectionArray::Ptr& msg
     detect = true;
     std::vector<Point2f> pic_points = sortPoints(data);
     hit_target_ = pnp(pic_points);
+    try
+    {
+      src_pose_.position.x = hit_target_.tvec.x();
+      src_pose_.position.y = hit_target_.tvec.y();
+      src_pose_.position.z = hit_target_.tvec.z();
+      Eigen::Quaterniond src_quat(hit_target_.rmat);
+      src_pose_.orientation.x = src_quat.x();
+      src_pose_.orientation.y = src_quat.y();
+      src_pose_.orientation.z = src_quat.z();
+      src_pose_.orientation.w = src_quat.w();
+
+      geometry_msgs::TransformStamped transform =
+          tf_buffer_->lookupTransform("odom", "camera2_optical_frame", msg->header.stamp, ros::Duration(1));
+
+      tf2::doTransform(src_pose_, transform_pose_, transform);
+    }
+    catch (tf2::TransformException& ex)
+    {
+      ROS_WARN("%s", ex.what());
+    }
   }
 
   if (tracker_->tracker_state == Tracker::LOST)
@@ -346,6 +368,28 @@ void Forecast_Node::pointsCallback(const rm_msgs::TargetDetectionArray::Ptr& msg
 
     tracker_->update(angle_, max_match_angle_, track_threshold_, lost_threshold_, detect);
     tracking_ = true;
+  }
+
+  try
+  {
+    geometry_msgs::Pose pose;
+    geometry_msgs::TransformStamped transform =
+        tf_buffer_->lookupTransform("camera2_optical_frame", "odom", msg->header.stamp, ros::Duration(1));
+    tf2::doTransform(transform_pose_, pose, transform);
+    hit_target_.tvec[0] = pose.position.x;
+    hit_target_.tvec[1] = pose.position.y;
+    hit_target_.tvec[2] = pose.position.z;
+    Eigen::Quaterniond  dst_quat(
+        pose.orientation.w,
+        pose.orientation.x,
+        pose.orientation.y,
+        pose.orientation.z
+        );
+    hit_target_.rmat = dst_quat;
+  }
+  catch (tf2::TransformException& ex)
+  {
+    ROS_WARN("%s", ex.what());
   }
 
   if (tracker_->tracker_state == Tracker::TEMP_LOST)
@@ -429,7 +473,7 @@ void Forecast_Node::pointsCallback(const rm_msgs::TargetDetectionArray::Ptr& msg
     {
       for (int i = 0; i < history_info_.size(); i++)
       {
-        if (abs((history_info_[i].stamp - msg->header.stamp).toSec()) < max_match_distance_ - delay_time_)
+        if (abs((history_info_[i].stamp - msg->header.stamp).toSec()) < max_match_distance_ - fly_time_)
         {
           params[3] = history_info_[i].speed;
           break;
@@ -441,7 +485,7 @@ void Forecast_Node::pointsCallback(const rm_msgs::TargetDetectionArray::Ptr& msg
       for (auto& w : history_info_)
       {
         if (abs((w.stamp - msg->header.stamp).toSec()) > max_match_distance_ &&
-            abs((w.stamp - msg->header.stamp).toSec()) < max_match_distance_ - delay_time_)
+            abs((w.stamp - msg->header.stamp).toSec()) < max_match_distance_ - fly_time_)
         {
           vel_buf_.push_back(w);
         }
@@ -453,7 +497,7 @@ void Forecast_Node::pointsCallback(const rm_msgs::TargetDetectionArray::Ptr& msg
     params[3] = 0.05;
 
   double t0 = 0;
-  double t1 = delay_time_ + temp_lost_time_;
+  double t1 = fly_time_;
   int mode = 0;
   std::vector<double> hit_point = calcAimingAngleOffset(hit_target_, params, t0, t1, mode);
 
@@ -491,7 +535,10 @@ void Forecast_Node::pointsCallback(const rm_msgs::TargetDetectionArray::Ptr& msg
   debug_result.pose.position.z = hit_point[2];
   debug_result.pose.orientation.x = tracker_->target_state(0);
   debug_result.pose.orientation.y = params[3];
-  debug_result.pose.orientation.z = frame_angle_ / dt_;
+  if (frame_angle_ > 0.2 || frame_angle_ < 0)
+    debug_result.pose.orientation.z = 0.05 / dt_;
+  else
+    debug_result.pose.orientation.z = frame_angle_ / dt_;
 
   debug_pub_.publish(debug_result);
 
@@ -542,6 +589,11 @@ void Forecast_Node::pointsCallback(const rm_msgs::TargetDetectionArray::Ptr& msg
   //  track_data.target_vel.z = 0;
   track_pub_.publish(track_data);
   publishMarkers(track_data);
+}
+
+void Forecast_Node::flyTimeCB(const std_msgs::Float64ConstPtr& msg)
+{
+  fly_time_ = msg->data + delay_time_;
 }
 
 std::vector<cv::Point2f> Forecast_Node::sortPoints(const int32_t* data)
@@ -731,7 +783,7 @@ void Forecast_Node::drawCallback()
   {
     for (auto& target_2d_en : target2d_his_)
     {
-      if (abs((target_2d_en.second - stamp_).toSec()) < delay_time_)
+      if (abs((target_2d_en.second - stamp_).toSec()) < fly_time_)
       {
         circle(img, target_2d_en.first, 10, cv::Scalar(255, 255, 0), -1, 2);
         break;

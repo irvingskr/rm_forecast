@@ -47,7 +47,7 @@ namespace rm_forecast
       debug_result.pose.position.y = target_state(0);
       debug_result.pose.position.z = abs(angle - target_state(0));
 
-      if (abs(angle - target_state(0)) > max_match_distance)
+      if (abs(angle - target_state(0)) > max_match_distance || isnan(angle))
       {
         debug_result.id = 0;
         /// 扇页跳变
